@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
@@ -13,7 +15,28 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: build (${{ matrix.goos }} ${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+          - runner: windows-latest
+            goos: windows
+            goarch: arm64
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,3 +52,29 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          exe=""
+          if [ "${GOOS}" = "windows" ]; then exe=".exe"; fi
+          out="voxlattice-${GOOS}-${GOARCH}${exe}"
+          # Build the main binary for distribution
+          go build -o "dist/${out}" .
+          (cd dist && sha256sum "${out}" > "${out}.sha256")
+          if command -v zip >/dev/null 2>&1; then
+            (cd dist && zip -9 "${out}.zip" "${out}" "${out}.sha256")
+            rm -f "dist/${out}" "dist/${out}.sha256"
+          else
+            # Fallback on runners without zip (unlikely)
+            (cd dist && tar -czf "${out}.tar.gz" "${out}" "${out}.sha256")
+            rm -f "dist/${out}" "dist/${out}.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxlattice-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
